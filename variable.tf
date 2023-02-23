@@ -24,3 +24,15 @@ variable "subnet_public_count" {
   type    = number
   default = 3
 }
+variable "ami_id" {
+  type    = string
+  default = "ami-0e14098d6744bd76f"
+}
+variable "sc_group" {
+  type    = string
+  default = "sg-091c55b62dc36eed6"
+}
+variable "ssh_key_name" {
+  type    = string
+  default = "ec2-cloud"
+}
