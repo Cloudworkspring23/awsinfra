@@ -120,12 +120,17 @@ resource "aws_security_group" "ami-ec2-sg" {
 # }
 
 resource "aws_instance" "cloud_instance" {
-  ami             = var.ami_id
-  instance_type   = "t2.micro"
-  security_groups = [aws_security_group.ami-ec2-sg.id]
-  subnet_id       = aws_subnet.public_subnet[0].id
-  key_name        = var.ssh_key_name
-
+  ami                     = var.ami_id
+  instance_type           = "t2.micro"
+  security_groups         = [aws_security_group.ami-ec2-sg.id]
+  subnet_id               = aws_subnet.public_subnet[0].id
+  key_name                = var.ssh_key_name
+  disable_api_termination = false
+  root_block_device {
+    delete_on_termination = true
+    volume_size           = 50
+    volume_type           = "gp2"
+  }
   tags = {
     Name = "cloudami"
   }
