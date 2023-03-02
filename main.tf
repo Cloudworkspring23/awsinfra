@@ -108,16 +108,18 @@ resource "aws_security_group" "ami-ec2-sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   tags = {
     Environment = "dev"
   }
 }
 
-# resource "aws_key_pair" "tf" {
-#   key_name   = "tf"
-#   public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDCPHptzJLbmg465AU7vR37xefRDjfZj5hOgd0XUJ5OcyhQJripIz9N1UK+miRPJOhfg7P6881tsPQeI3BtNOL4eX/pWahGQ+A0VZKLJMUF7xsiEPQjXWy0KkoBakqAFbyn3m6L9iZkoxB6m8n+d6BOm9eZ9Gd1eFx1KLjLSagh9KpkxtzuePzdC4HVgAfRYwXG+JzxOrSptjdRyHZth4bs1qL/uqkVcWJQ5xz643EVjr2GTr0WneKUO6HONfibexHgy20XwvW/5BnXl8m3MlVs+wnWE7caz6fvD4UZPjslVTmmgM8l8QPaBkaWncMO5O9qHipp9BPI49zu8qliPRsZAhYOZvgqbnfQVkMe3rlU+29SKMR7hBAEm4SsFigLenreleHz0f3NkR4+0Z0H6mVgmtYr2fpGM23bXsTxJH0DVSkW8mWAIDQkbQv55jXElVNj6EhpOZ557SKprPzCJXzxfQ2JQwkxQEIGMlhFVYLEjjtRMbou4osfQDH9mGnip4M= maverick1997@Arjuns-MacBook-Air.local"
-# }
 
 resource "aws_instance" "cloud_instance" {
   ami                     = var.ami_id
@@ -126,12 +128,167 @@ resource "aws_instance" "cloud_instance" {
   subnet_id               = aws_subnet.public_subnet[0].id
   key_name                = var.ssh_key_name
   disable_api_termination = false
+  iam_instance_profile    = aws_iam_instance_profile.ec2_s3_profile.name
   root_block_device {
     delete_on_termination = true
     volume_size           = 50
     volume_type           = "gp2"
   }
+
+
+  user_data = <<EOF
+    #!/bin/bash
+
+    cd /home/ec2-user/webapp/
+    touch .env
+    echo "API_PORT=5000" >> .env
+    echo "DB_HOST=${aws_db_instance.database.address}" >> .env
+    echo "DB_DATABASE=${aws_db_instance.database.db_name}" >> .env
+    echo "DB_USER=${aws_db_instance.database.username}" >> .env
+    echo "DB_PASSWORD=${aws_db_instance.database.password}" >> .env
+    echo "AWS_REGION=${var.region}" >> .env
+    echo "AWS_S3_BUCKET_NAME=${aws_s3_bucket.bucket.bucket}" >> .env
+    sudo systemctl daemon-relod
+    sudo systemctl enable webapp.service
+    sudo systemctl start webapp.service
+  EOF
+
   tags = {
-    Name = "cloudami"
+    Name = "webapp"
+  }
+
+}
+resource "aws_db_instance" "database" {
+  allocated_storage = 10
+  engine            = "mysql"
+  #engine_version       = "5.7"
+  instance_class = "db.t3.micro"
+  #name                 = "csye6225"
+  username               = "csye6225"
+  password               = "Password"
+  db_name                = "csye6225"
+  multi_az               = false
+  vpc_security_group_ids = [aws_security_group.database_sg.id]
+  db_subnet_group_name   = aws_db_subnet_group.database.id
+  skip_final_snapshot    = true
+  #final_snapshot_identifier = "mysnaptaken1197"
+}
+resource "aws_security_group" "database_sg" {
+  name        = "database"
+  description = "Allow inbound traffic to 3306 from VPC"
+  vpc_id      = local.vpc_id
+
+  ingress {
+    description     = "open port 3306 to vpc"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ami-ec2-sg.id]
+  }
+
+  tags = {
+    Name = "database"
+  }
+}
+
+resource "aws_db_subnet_group" "database" {
+  name       = "database"
+  subnet_ids = [aws_subnet.private_subnet[0].id, aws_subnet.private_subnet[1].id]
+
+  tags = {
+    Name = "database subnet group"
+  }
+}
+resource "aws_iam_policy" "webapp_s3_policy" {
+  name        = "webapp_s3_policy"
+  path        = "/"
+  description = "Allow webapp s3 access"
+
+  # Terraform's "jsonencode" function converts a
+  # Terraform expression result to valid JSON syntax.
+  policy = jsonencode({
+    Version : "2012-10-17",
+    Statement : [
+      {
+        "Action" : [
+          "s3:DeleteObject",
+          "s3:GetObject",
+          "s3:PutObject"
+        ],
+        "Effect" : "Allow",
+        "Resource" : [
+          "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}",
+          "arn:aws:s3:::${aws_s3_bucket.bucket.bucket}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "webapp_s3_access_role" {
+  name = "webapp_s3_access_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Sid    = ""
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_policy_attachment" "ec2_s3_policy_role" {
+  name       = "webapp_s3_attachment"
+  roles      = [aws_iam_role.webapp_s3_access_role.name]
+  policy_arn = aws_iam_policy.webapp_s3_policy.arn
+}
+
+resource "aws_iam_instance_profile" "ec2_s3_profile" {
+  name = "webapp_s3_profile"
+  role = aws_iam_role.webapp_s3_access_role.name
+}
+
+resource "aws_s3_bucket" "bucket" {
+  bucket = "csye6225002928646"
+  force_destroy = true
+
+  tags = {
+    Name        = "CSYE 6225 webapp"
+    Environment = var.profile
+  }
+}
+
+resource "aws_s3_bucket_acl" "bucket_acl" {
+  bucket = aws_s3_bucket.bucket.id
+  acl    = "private"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "bucket_lifecycle_config" {
+  bucket = aws_s3_bucket.bucket.id
+
+  rule {
+    id     = "move_to_IA"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
+  bucket = aws_s3_bucket.bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
   }
 }
