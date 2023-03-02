@@ -26,7 +26,7 @@ variable "subnet_public_count" {
 }
 variable "ami_id" {
   type    = string
-  default = "ami-0e14098d6744bd76f"
+  default = "ami-00d512607a3f682a7"
 }
 variable "sc_group" {
   type    = string

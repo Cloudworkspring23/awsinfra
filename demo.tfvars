@@ -6,4 +6,4 @@ region = "us-east-1"
 
 
 profile = "demo"
-ami_id = "ami-0e14098d6744bd76f"
+ami_id  = "ami-0e14098d6744bd76f"
