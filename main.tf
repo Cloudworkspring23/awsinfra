@@ -255,7 +255,7 @@ resource "aws_iam_instance_profile" "ec2_s3_profile" {
 }
 
 resource "aws_s3_bucket" "bucket" {
-  bucket = "csye6225002928646"
+  bucket        = "csye6225002928646"
   force_destroy = true
 
   tags = {
@@ -291,4 +291,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "example" {
       sse_algorithm = "AES256"
     }
   }
+}
+resource "aws_route53_record" "server_mapping_record" {
+  zone_id = var.zone_id
+  name    = var.domain_name
+  type    = "A"
+  ttl     = "60"
+  records = [aws_instance.cloud_instance.public_ip]
 }
