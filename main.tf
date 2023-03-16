@@ -171,6 +171,7 @@ resource "aws_db_instance" "database" {
   vpc_security_group_ids = [aws_security_group.database_sg.id]
   db_subnet_group_name   = aws_db_subnet_group.database.id
   skip_final_snapshot    = true
+  parameter_group_name   = aws_db_parameter_group.mysql57_pg.name
   #final_snapshot_identifier = "mysnaptaken1197"
 }
 resource "aws_security_group" "database_sg" {
@@ -299,3 +300,8 @@ resource "aws_route53_record" "server_mapping_record" {
   ttl     = "60"
   records = [aws_instance.cloud_instance.public_ip]
 }
+resource "aws_db_parameter_group" "mysql57_pg" {
+  name   = "webapp-database-pg"
+  family = "mysql5.7"
+}
+
