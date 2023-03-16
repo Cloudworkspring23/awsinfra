@@ -299,9 +299,4 @@ resource "aws_route53_record" "server_mapping_record" {
   type    = "A"
   ttl     = "60"
   records = [aws_instance.cloud_instance.public_ip]
-}
-# resource "aws_db_parameter_group" "mysql57_pg" {
-#   name   = "webapp-database-pg"
-#   family = "mysql5.7"
-# }
 
