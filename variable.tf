@@ -36,3 +36,12 @@ variable "ssh_key_name" {
   type    = string
   default = "ec2-cloud"
 }
+variable "domain_name" {
+  default = "dev.arjunbhatia.me"
+}
+variable "zone_id" {
+  type    = string
+  default = "Z0002838PT3TMOV5MUMG"
+
+
+}
