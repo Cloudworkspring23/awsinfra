@@ -6,6 +6,6 @@ region = "us-east-1"
 
 
 profile     = "demo"
-ami_id      = "ami-0aa1581eb4105c9d2"
+ami_id      = "ami-090ecb6f3b3e1afef"
 domain_name = "demo.arjunbhatia.me"
-zone_id     = "Z08805302HJK69SD5PUFO"
+zone_id     = "Z0785816ZCD4LXB4GEGJ"
