@@ -148,7 +148,7 @@ resource "aws_instance" "cloud_instance" {
     echo "DB_PASSWORD=${aws_db_instance.database.password}" >> .env
     echo "AWS_REGION=${var.region}" >> .env
     echo "AWS_S3_BUCKET_NAME=${aws_s3_bucket.bucket.bucket}" >> .env
-    sudo systemctl daemon-relod
+    sudo systemctl daemon-reload
     sudo systemctl enable webapp.service
     sudo systemctl start webapp.service
   EOF
@@ -242,6 +242,9 @@ resource "aws_iam_role" "webapp_s3_access_role" {
       },
     ]
   })
+  tags = {
+    Name = "EC2-CSYE6225"
+  }
 }
 
 resource "aws_iam_policy_attachment" "ec2_s3_policy_role" {
@@ -302,5 +305,17 @@ resource "aws_route53_record" "server_mapping_record" {
 }
 resource "aws_db_parameter_group" "mysql57_pg" {
   name   = "webapp-database-pg"
+
+  family = "mysql8.0"
+}
+
+data "aws_iam_policy" "webapp_cloudwatch_server_policy" {
+  arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+resource "aws_iam_policy_attachment" "ec2_cloudwatch_policy_role" {
+  name       = "webapp_cloudwatch_policy"
+  roles      = [aws_iam_role.webapp_s3_access_role.name]
+  policy_arn = data.aws_iam_policy.webapp_cloudwatch_server_policy.arn
+
   family = "mysql5.7"
 }
