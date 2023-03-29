@@ -304,7 +304,7 @@ resource "aws_route53_record" "server_mapping_record" {
   records = [aws_instance.cloud_instance.public_ip]
 }
 resource "aws_db_parameter_group" "mysql57_pg" {
-  name   = "webapp-database-pg"
+  name = "webapp-database-pg"
 
   family = "mysql8.0"
 }
@@ -316,6 +316,4 @@ resource "aws_iam_policy_attachment" "ec2_cloudwatch_policy_role" {
   name       = "webapp_cloudwatch_policy"
   roles      = [aws_iam_role.webapp_s3_access_role.name]
   policy_arn = data.aws_iam_policy.webapp_cloudwatch_server_policy.arn
-
-  family = "mysql5.7"
 }
