@@ -122,43 +122,6 @@ data "template_file" "user_data" {
 
 }
 
-# resource "aws_instance" "cloud_instance" {
-#   ami                     = var.ami_id
-#   instance_type           = "t2.micro"
-#   security_groups         = [aws_security_group.ami-ec2-sg.id]
-#   subnet_id               = aws_subnet.public_subnet[0].id
-#   key_name                = var.ssh_key_name
-#   disable_api_termination = false
-#   iam_instance_profile    = aws_iam_instance_profile.ec2_s3_profile.name
-#   root_block_device {
-#     delete_on_termination = true
-#     volume_size           = 50
-#     volume_type           = "gp2"
-#   }
-
-
-#   user_data = <<EOF
-#     #!/bin/bash
-
-#     cd /home/ec2-user/webapp/
-#     touch .env
-#     echo "API_PORT=5000" >> .env
-#     echo "DB_HOST=${aws_db_instance.database.address}" >> .env
-#     echo "DB_DATABASE=${aws_db_instance.database.db_name}" >> .env
-#     echo "DB_USER=${aws_db_instance.database.username}" >> .env
-#     echo "DB_PASSWORD=${aws_db_instance.database.password}" >> .env
-#     echo "AWS_REGION=${var.region}" >> .env
-#     echo "AWS_S3_BUCKET_NAME=${aws_s3_bucket.bucket.bucket}" >> .env
-#     sudo systemctl daemon-reload
-#     sudo systemctl enable webapp.service
-#     sudo systemctl start webapp.service
-#   EOF
-
-#   tags = {
-#     Name = "webapp"
-#   }
-
-# }
 resource "aws_db_instance" "database" {
   allocated_storage = 10
   engine            = "mysql"
@@ -173,6 +136,9 @@ resource "aws_db_instance" "database" {
   db_subnet_group_name   = aws_db_subnet_group.database.id
   skip_final_snapshot    = true
   parameter_group_name   = aws_db_parameter_group.mysql57_pg.name
+  storage_encrypted      = true
+  kms_key_id             = aws_kms_key.rds_key.arn
+  apply_immediately      = true
   #final_snapshot_identifier = "mysnaptaken1197"
 }
 resource "aws_security_group" "database_sg" {
@@ -320,7 +286,7 @@ resource "aws_iam_policy_attachment" "ec2_cloudwatch_policy_role" {
   roles      = [aws_iam_role.webapp_s3_access_role.name]
   policy_arn = data.aws_iam_policy.webapp_cloudwatch_server_policy.arn
 }
-resource "aws_launch_template" "lt" {
+resource "aws_launch_template" "launch_temp" {
   name                                 = "asg_launch_config"
   image_id                             = var.ami_id
   instance_initiated_shutdown_behavior = "terminate"
@@ -339,6 +305,8 @@ resource "aws_launch_template" "lt" {
       delete_on_termination = true
       volume_size           = 50
       volume_type           = "gp2"
+      encrypted             = true
+      kms_key_id            = aws_kms_key.ebs_key.arn
     }
   }
 
@@ -360,14 +328,17 @@ resource "aws_launch_template" "lt" {
   user_data = base64encode(data.template_file.user_data.rendered)
 }
 
+
+
 resource "aws_autoscaling_group" "asg" {
-  name                = "csye6225-asg-spring23"
-  max_size            = 3
-  min_size            = 1
-  desired_capacity    = 1
-  force_delete        = true
-  default_cooldown    = 60
-  vpc_zone_identifier = [for subnet in aws_subnet.public_subnet : subnet.id]
+  name                  = "csye6225-asg-spring23"
+  max_size              = 3
+  min_size              = 1
+  desired_capacity      = 1
+  force_delete          = true
+  default_cooldown      = 60
+  vpc_zone_identifier   = [for subnet in aws_subnet.public_subnet : subnet.id]
+  protect_from_scale_in = false
 
   tag {
     key                 = "Name"
@@ -376,7 +347,7 @@ resource "aws_autoscaling_group" "asg" {
   }
 
   launch_template {
-    id      = aws_launch_template.lt.id
+    id      = aws_launch_template.launch_temp.id
     version = "$Latest"
   }
 
@@ -504,13 +475,194 @@ resource "aws_lb_target_group" "alb_tg" {
   }
 }
 
-resource "aws_lb_listener" "lb_listener" {
+resource "aws_lb_listener" "HTTP" {
   load_balancer_arn = aws_lb.lb.arn
   port              = "80"
   protocol          = "HTTP"
 
   default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+
+  }
+}
+data "aws_acm_certificate" "ssl" {
+  domain   = var.domain_name
+  statuses = ["ISSUED"]
+
+}
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.lb.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+
+  certificate_arn = data.aws_acm_certificate.ssl.arn
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.alb_tg.arn
   }
+
 }
+
+
+
+resource "aws_lb_listener_certificate" "lb_certificate" {
+  listener_arn    = aws_lb_listener.https.arn
+  certificate_arn = data.aws_acm_certificate.ssl.arn
+
+}
+
+
+resource "aws_kms_key" "rds_key" {
+  description = "KMS Key for RDS"
+
+  policy = <<EOF
+{
+  "Id": "kms-key-for-rds",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Enable IAM User Permissions",
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"},
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "Allow access for Key Administrators",
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS"},
+      "Action": [
+        "kms:Create*",
+        "kms:Describe*",
+        "kms:Enable*",
+        "kms:List*",
+        "kms:Put*",
+        "kms:Update*",
+        "kms:Revoke*",
+        "kms:Disable*",
+        "kms:Get*",
+        "kms:Delete*",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Allow use of the key",
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS"},
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Allow attachment of persistent resources",
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS"},
+      "Action": [
+        "kms:CreateGrant",
+        "kms:ListGrants",
+        "kms:RevokeGrant"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+}
+resource "aws_kms_key" "ebs_key" {
+  description = "KMS Key for EBS"
+
+  policy = <<EOF
+{
+    "Id": "key-for-ebs",
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "Enable IAM User Permissions",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+            },
+            "Action": "kms:*",
+            "Resource": "*"
+        },
+        {
+            "Sid": "Allow access for Key Administrators",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+            },
+            "Action": [
+                "kms:Create*",
+                "kms:Describe*",
+                "kms:Enable*",
+                "kms:List*",
+                "kms:Put*",
+                "kms:Update*",
+                "kms:Revoke*",
+                "kms:Disable*",
+                "kms:Get*",
+                "kms:Delete*",
+                "kms:TagResource",
+                "kms:UntagResource",
+                "kms:ScheduleKeyDeletion",
+                "kms:CancelKeyDeletion"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "Allow use of the key",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+            },
+            "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "Allow attachment of persistent resources",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+            },
+            "Action": [
+                "kms:CreateGrant",
+                "kms:ListGrants",
+                "kms:RevokeGrant"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "Bool": {
+                    "kms:GrantIsForAWSResource": "true"
+                }
+            }
+        }
+    ]
+}
+
+EOF
+}
+
+data "aws_caller_identity" "current" {}
